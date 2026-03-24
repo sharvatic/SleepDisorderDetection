@@ -305,7 +305,6 @@ def epoch_to_band_slices(epoch, sfreq,
                           slice_sec=1.0,
                           window_sec=STFT_WINDOW_SEC):
     """
-    REPLACES epoch_to_band_slices() from CWT version.
 
     PREVIOUS (CWT):
         for each channel:
@@ -427,7 +426,6 @@ def band_psd_to_rgb(band_row, ch_names, grid_size,
 
 # ═════════════════════════════════════════════════════════════
 # STEP 5 — BUILD 4D TENSOR FOR ONE EPOCH
-# UNCHANGED from CWT version except calls new epoch_to_band_slices
 # ═════════════════════════════════════════════════════════════
 
 def epoch_to_tensor(epoch, sfreq, ch_names,
@@ -481,10 +479,10 @@ DIRECTORY STRUCTURE EXPECTED:
         n2.txt
         ...
         nfle1.edf       NFLE patient 1
-        nfle1.txt
+        nfle1.edf.st
         ...
         rbd1.edf
-        rbd1.txt
+        rbd1.edf.st
         ...
 
 OUTPUT STRUCTURE:
@@ -512,12 +510,12 @@ HOW IT IS USED FOR TRAINING:
 
 THREE LABEL LEVELS:
     disorder_label  : int 0–7   patient diagnosis (from filename)
-    stage_label     : int 0–5   sleep stage per epoch (from .txt, every 30s)
+    stage_label     : int 0–5   sleep stage per epoch (from .edf.st, every 30s)
     slice_labels    : int array shape (30,)  CAP event per second (0=none,
                                              1=A1, 2=A2, 3=A3)
 
 EPOCH CHOICE — 30 SECONDS:
-    Labels in the .txt file are given every 30 seconds.
+    Labels in the .edf.st file are given every 30 seconds.
     Using 30-second epochs gives a clean one-to-one mapping:
         one epoch → one sleep stage label → no ambiguity
     Each 30-second epoch produces 30 one-second slices.
@@ -588,145 +586,95 @@ CAP_NAMES = {
 
 
 # ═════════════════════════════════════════════════════════════
-# STEP 1 — PARSE ANNOTATION FILE
+
+# ═════════════════════════════════════════════════════════════
+# STEP 1 — PARSE ANNOTATION FILE  (.edf.st format)
 # ═════════════════════════════════════════════════════════════
 
-def parse_annotations(txt_path):
+def parse_st_annotations(edf_path, default_sfreq=512.0):
     """
-    Parse a CAP .txt annotation file.
+    Parse a CAP .edf.st WFDB annotation file.
 
-    The .txt file has this format (tab-separated):
-        Sleep Stage   Position   Time [hh:mm:ss]   Event   Duration[s]   Location
-        1             SUPINE     22:06:03          SLEEP-S1    30         C3-A2
-        2             SUPINE     22:07:03          SLEEP-S2    30         C3-A2
-        2             SUPINE     22:08:33          MCAP-A1     8          C3-A2
+    WHY .edf.st INSTEAD OF .txt:
+        The CAP dataset ships two annotation formats for the same data:
+            .edf.st  WFDB binary annotation file  ← what we use
+            .txt     human-readable REMlogic export
+        Both contain identical data: sleep stages + CAP A phase events.
+        You do NOT need .txt files.
 
-    TWO types of rows:
-        SLEEP-xx rows → sleep stage annotation, always 30 seconds
-        MCAP-Ax rows  → CAP A phase event, duration varies (3–30s typically)
-
-    What this function does:
-        Reads every row after the header.
-        Separates SLEEP rows (hypnogram) from MCAP rows (CAP events).
-        Converts timestamps to absolute seconds from recording start.
-        Returns structured arrays ready for label assignment.
+    WHAT THE .edf.st FILE CONTAINS:
+        Each annotation has a sample number and an aux_note string:
+            "SLEEP-S2 (30s) C3-A2"   stage 2 sleep
+            "MCAP-A3 (5s) C3-A2"     CAP A3 phase, duration 5 seconds
+            "SLEEP-REM (30s) C3-A2"  REM sleep
+            "SLEEP-W (30s) C3-A2"    wake
 
     Parameters
     ----------
-    txt_path : path to the .txt annotation file
+    edf_path      : path to .edf file — .edf.st must be in same directory
+    default_sfreq : fallback native sfreq if header unreadable (512 Hz for CAP)
 
     Returns
     -------
     hypnogram  : list of (start_sec, stage_int)
-                 one entry per 30s window, covering the entire recording
-                 start_sec is relative to start of recording (second 0)
-
     cap_events : list of (start_sec, duration_sec, cap_type_int)
-                 one entry per CAP A phase event
-                 start_sec is relative to recording start
-                 cap_type_int: 1=A1  2=A2  3=A3
     """
-    hypnogram  = []   # (start_sec, stage_int)
-    cap_events = []   # (start_sec, duration_sec, cap_type_int)
+    import wfdb
 
-    recording_start_sec = None   # absolute timestamp of first annotation
+    edf_path    = str(edf_path)
+    record_name = edf_path.replace(".edf", "")   # wfdb record = path minus .edf
 
+    hypnogram  = []
+    cap_events = []
+
+    # get native sfreq from EDF header to convert sample numbers to seconds
     try:
-        with open(txt_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+        raw_info     = mne.io.read_raw_edf(edf_path, preload=False, verbose=False)
+        native_sfreq = raw_info.info["sfreq"]
+    except Exception:
+        native_sfreq = default_sfreq
+        print(f"  [warn] Using default sfreq {default_sfreq} Hz")
+
+    # read the .edf.st annotation file
+    try:
+        ann = wfdb.rdann(record_name, "edf.st")
+    except FileNotFoundError:
+        print(f"  [warn] No .edf.st file found at {record_name}.edf.st")
+        return [], []
     except Exception as e:
-        print(f"  [warn] Cannot read {txt_path}: {e}")
+        print(f"  [warn] Failed to read {record_name}.edf.st: {e}")
         return [], []
 
-    in_data = False
-    for line in lines:
-        line = line.strip()
-        if not line:
+    for i, aux in enumerate(ann.aux_note):
+        if not aux or not aux.strip():
             continue
 
-        # detect header line — data starts after this
-        if "Sleep Stage" in line and "Time" in line:
-            in_data = True
-            continue
+        aux     = aux.strip()
+        rel_sec = float(ann.sample[i]) / native_sfreq
 
-        if not in_data:
-            continue
+        if "SLEEP-" in aux:
+            m = re.search(r"SLEEP-([A-Z0-9]+)", aux)
+            if m:
+                s = m.group(1)
+                if s == "W":                  stage = 0
+                elif s in ("REM", "R"):       stage = 5
+                elif s == "MT":               stage = 7
+                else:
+                    try:                      stage = int(s.replace("S", ""))
+                    except ValueError:        continue
+                hypnogram.append((rel_sec, stage))
 
-        # split on whitespace — columns are tab or space separated
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-
-        # extract time — format hh:mm:ss
-        # find the part that matches hh:mm:ss pattern
-        time_str = None
-        for part in parts:
-            if re.match(r"^\d{2}:\d{2}:\d{2}$", part):
-                time_str = part
-                break
-
-        if time_str is None:
-            continue
-
-        hh, mm, ss = [int(x) for x in time_str.split(":")]
-        abs_sec = hh * 3600 + mm * 60 + ss
-
-        # recordings often start after midnight — handle day wrap
-        # if hour < 10 assume it crossed midnight, add 24 hours
-        if hh < 10:
-            abs_sec += 24 * 3600
-
-        # set recording start from first annotation
-        if recording_start_sec is None:
-            recording_start_sec = abs_sec
-
-        # relative seconds from recording start
-        rel_sec = abs_sec - recording_start_sec
-
-        # find the Event column — contains SLEEP-xx or MCAP-Ax
-        event_str = None
-        duration  = 30   # default
-
-        for i, part in enumerate(parts):
-            if part.startswith("SLEEP-") or part.startswith("MCAP-"):
-                event_str = part
-                # duration is the next column after event
-                if i + 1 < len(parts):
-                    try:
-                        duration = int(float(parts[i + 1]))
-                    except ValueError:
-                        duration = 30
-                break
-
-        if event_str is None:
-            continue
-
-        # ── SLEEP stage row ───────────────────────────────────────────────
-        if event_str.startswith("SLEEP-"):
-            stage_str = event_str.replace("SLEEP-", "").strip()
-            if stage_str == "W":
-                stage = 0
-            elif stage_str == "REM" or stage_str == "R":
-                stage = 5
-            elif stage_str == "MT":
-                stage = 7
-            else:
-                try:
-                    stage = int(stage_str.replace("S", ""))
-                except ValueError:
-                    continue
-            hypnogram.append((rel_sec, stage))
-
-        # ── CAP A phase row ───────────────────────────────────────────────
-        elif event_str.startswith("MCAP-"):
-            # MCAP-A1, MCAP-A2, MCAP-A3
-            match = re.search(r"A(\d)", event_str)
-            if match:
-                cap_type = int(match.group(1))   # 1, 2, or 3
+        elif "MCAP-" in aux:
+            tm = re.search(r"A(\d)", aux)
+            dm = re.search(r"\((\d+)s\)", aux)
+            if tm:
+                cap_type = int(tm.group(1))
+                duration = int(dm.group(1)) if dm else 5
                 cap_events.append((rel_sec, duration, cap_type))
 
+    print(f"  Annotations: {len(hypnogram)} stage labels, "
+          f"{len(cap_events)} CAP events")
     return hypnogram, cap_events
-
 
 # ═════════════════════════════════════════════════════════════
 # STEP 2 — ASSIGN LABELS TO EPOCHS
@@ -963,7 +911,7 @@ def compute_global_norms(edf_paths, sample_patients=20):
 # STEP 5 — PROCESS ONE PATIENT
 # ═════════════════════════════════════════════════════════════
 
-def process_patient(edf_path, txt_path, norms, output_dir):
+def process_patient(edf_path, norms, output_dir):
     """
     Process one patient file completely.
 
@@ -984,7 +932,7 @@ def process_patient(edf_path, txt_path, norms, output_dir):
     Parameters
     ----------
     edf_path   : path to .edf file
-    txt_path   : path to .txt annotation file
+    edf_path   : path to .edf file (.edf.st must be alongside it)
     norms      : dict of global normalisation bounds (computed once for all patients)
     output_dir : root output directory
 
@@ -1018,10 +966,8 @@ def process_patient(edf_path, txt_path, norms, output_dir):
     n_epochs = epochs.shape[0]
     print(f"  Loaded in {time.time()-t_load:.1f}s  |  {n_epochs} epochs")
 
-    # ── parse annotations ─────────────────────────────────────────────────
-    hypnogram, cap_events = parse_annotations(txt_path)
-    print(f"  Annotations: {len(hypnogram)} stage labels, "
-          f"{len(cap_events)} CAP events")
+    # ── parse annotations from .edf.st ───────────────────────────────────
+    hypnogram, cap_events = parse_st_annotations(edf_path)
 
     # ── process each epoch ────────────────────────────────────────────────
     manifest_rows  = []
@@ -1166,7 +1112,7 @@ def build_dataset(data_dir, output_dir, sample_patients_for_norms=20):
     Full dataset build pipeline.
 
     WORKFLOW:
-        1. Find all EDF+TXT file pairs in data_dir
+        1. Find all EDF+EDF.ST file pairs in data_dir
         2. Compute global norms ONCE from a sample of patients
         3. For each patient:
                load EDF once
@@ -1178,7 +1124,7 @@ def build_dataset(data_dir, output_dir, sample_patients_for_norms=20):
 
     Parameters
     ----------
-    data_dir   : directory containing all .edf and .txt files
+    data_dir   : directory containing all .edf and .edf.st files
     output_dir : where to write tensors, labels, manifest, norms
     sample_patients_for_norms : how many patients to use for norm estimation
     """
@@ -1189,20 +1135,24 @@ def build_dataset(data_dir, output_dir, sample_patients_for_norms=20):
 
     t_total = time.time()
 
-    # ── find all file pairs ────────────────────────────────────────────────
+    # ── find all EDF+.edf.st pairs ────────────────────────────────────────
+    # .edf.st is the annotation file shipped with the CAP dataset
     edf_files = sorted(data_dir.glob("*.edf"))
     pairs     = []
     for edf in edf_files:
-        txt = edf.with_suffix(".txt")
-        if txt.exists():
-            pairs.append((str(edf), str(txt)))
+        st_file = Path(str(edf) + ".st")
+        if st_file.exists():
+            pairs.append(str(edf))
         else:
-            print(f"  [warn] No .txt found for {edf.name} — skipping")
+            print(f"  [warn] No .edf.st for {edf.name} — skipping")
 
-    print(f"Found {len(pairs)} EDF+TXT pairs in {data_dir}")
+    print(f"Found {len(pairs)} EDF files with .edf.st annotations")
 
     if len(pairs) == 0:
-        raise RuntimeError(f"No valid EDF+TXT pairs found in {data_dir}")
+        raise RuntimeError(
+            f"No .edf.st files found in {data_dir}\n"
+            f"Ensure cap_data contains both *.edf and *.edf.st files."
+        )
 
     # ── compute global norms ONCE ─────────────────────────────────────────
     # paid once, used for every epoch of every patient
@@ -1213,18 +1163,17 @@ def build_dataset(data_dir, output_dir, sample_patients_for_norms=20):
         norms = np.load(norms_path, allow_pickle=True).item()
         print(f"\nLoaded cached global norms from {norms_path}")
     else:
-        edf_paths = [p[0] for p in pairs]
-        norms     = compute_global_norms(edf_paths, sample_patients_for_norms)
+        norms = compute_global_norms(pairs, sample_patients_for_norms)
         np.save(norms_path, norms)
         print(f"  Saved global norms → {norms_path}")
 
     # ── process each patient ──────────────────────────────────────────────
     all_manifest_rows = []
 
-    for i, (edf_path, txt_path) in enumerate(pairs):
+    for i, edf_path in enumerate(pairs):
         print(f"\nPatient {i+1}/{len(pairs)}")
         try:
-            rows = process_patient(edf_path, txt_path, norms, output_dir)
+            rows = process_patient(edf_path, norms, output_dir)
             all_manifest_rows.extend(rows)
         except Exception as e:
             print(f"  [ERROR] Failed to process {edf_path}: {e}")
@@ -1249,7 +1198,7 @@ def build_dataset(data_dir, output_dir, sample_patients_for_norms=20):
     print("\n" + "="*60)
     print("DATASET SUMMARY")
     print("="*60)
-    print(f"Total patients    : {len(pairs)}")
+    print(f"Total patients    : {len(pairs)} (with .edf.st annotations)")
     print(f"Total epochs      : {len(manifest_df)}")
     print(f"Tensor shape      : ({int(EPOCH_SEC/SLICE_SEC)}, "
           f"{GRID_SIZE}, {GRID_SIZE}, 3)")
@@ -1287,7 +1236,6 @@ def build_dataset(data_dir, output_dir, sample_patients_for_norms=20):
 class CAPDataset:
     """
     Dataset loader for the built dataset.
-    Used by the training script — not by the build script.
 
     Loads tensors from disk on demand during training.
     Each sample returns:
@@ -1295,6 +1243,10 @@ class CAPDataset:
         disorder_label  : int  0–7
         stage_label     : int  0–5
         slice_labels    : (30,) int array  0–3
+                            0 = nothing happening    — background sleep, no arousal event
+                            1 = CAP Phase A1         — synchronized EEG event, low arousal impact
+                            2 = CAP Phase A2         — mixed event, intermediate arousal
+                            3 = CAP Phase A3         — desynchronized event, heavy arousal impact
 
     Example usage in training:
         dataset    = CAPDataset("dataset/metadata/manifest.csv")
@@ -1394,7 +1346,7 @@ class CAPDataset:
 
 if __name__ == "__main__":
     # ── configure these paths ─────────────────────────────────────────────
-    DATA_DIR   = "./cap_data"    # folder containing all .edf and .txt files
+    DATA_DIR   = "./cap_data"    # folder containing all .edf and .edf.st files
     OUTPUT_DIR = "./dataset"     # where to write everything
 
     # ── build the full dataset ────────────────────────────────────────────
@@ -1405,7 +1357,7 @@ if __name__ == "__main__":
     )
 
     # ── verify the dataset can be loaded ─────────────────────────────────
-    print("\nVerifying dataset loader ...")
+    print("\nVerifying dataset loader")
     dataset = CAPDataset(
         manifest_path   = f"{OUTPUT_DIR}/metadata/manifest.csv",
         label_dir       = f"{OUTPUT_DIR}/labels",
