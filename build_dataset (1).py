@@ -106,7 +106,6 @@ def resolve_position(ch_name):
 
 # ═════════════════════════════════════════════════════════════
 # STEP 1 — LOAD EDF
-# UNCHANGED from CWT version
 # ═════════════════════════════════════════════════════════════
 
 def load_edf(edf_path, target_channels=None, resample_hz=100.0):
@@ -231,7 +230,6 @@ def stft_band_power(signal, sfreq,
                     window_sec=STFT_WINDOW_SEC,
                     hop_sec=STFT_HOP_SEC):
     """
-    NEW — replaces cwt_power_matrix() from CWT version.
 
     Compute per-second power of a signal that has ALREADY been
     bandpass filtered. Because the signal is already band-limited,
@@ -376,7 +374,6 @@ def epoch_to_band_slices(epoch, sfreq,
 
 # ═════════════════════════════════════════════════════════════
 # STEP 4 — RBF INTERPOLATION → RGB FRAME
-# UNCHANGED from CWT version
 # ═════════════════════════════════════════════════════════════
 
 def band_psd_to_rgb(band_row, ch_names, grid_size,
@@ -385,7 +382,6 @@ def band_psd_to_rgb(band_row, ch_names, grid_size,
                     vmin_beta,  vmax_beta):
     """
     Interpolate one time slice onto (H, W, 3) RGB frame.
-    UNCHANGED from CWT version.
 
     B = RBF interpolation of delta power → normalised → blue channel
     G = RBF interpolation of alpha power → normalised → green channel
@@ -794,7 +790,7 @@ def get_disorder_label(filename):
 # STEP 4 — COMPUTE GLOBAL NORMS ACROSS ALL PATIENTS
 # ═════════════════════════════════════════════════════════════
 
-def compute_global_norms(edf_paths, sample_patients=20):
+def compute_global_norms(edf_paths, sample_patients=30):
     """
     Compute global percentile normalisation bounds across all patients.
 
@@ -822,7 +818,7 @@ def compute_global_norms(edf_paths, sample_patients=20):
     ----------
     edf_paths       : list of all EDF file paths
     sample_patients : how many patients to sample for norm estimation
-                      20 out of 108 gives stable percentile estimates
+                      30 out of 108 gives stable percentile estimates
                       more = more accurate but slower
 
     Returns
@@ -835,9 +831,29 @@ def compute_global_norms(edf_paths, sample_patients=20):
     print(f"\nComputing global norms from {sample_patients} sampled patients ...")
 
     # sample evenly across the patient list
-    step     = max(1, len(edf_paths) // sample_patients)
-    sampled  = edf_paths[::step][:sample_patients]
+    # step     = max(1, len(edf_paths) // sample_patients)
+    # sampled  = edf_paths[::step][:sample_patients]
 
+    # 1. Group patients by disorder prefix to ensure diverse representation
+    disorder_groups = {}
+    for path in edf_paths:
+        label = get_disorder_label(path)
+        if label not in disorder_groups: 
+            disorder_groups[label] = []
+        disorder_groups[label].append(path)
+    
+    # 2. Pick at least 3-4 patients from every disorder group
+    # This ensures your 'Global Norm' accounts for the highest arousal power 
+    # across ALL pathologies, not just the healthy ones.
+    sampled = []
+    for label in sorted(disorder_groups.keys()):
+        paths = disorder_groups[label]
+        # Take up to 4 patients per category to get a balanced max-power estimate
+        sampled.extend(paths[:min(len(paths), 4)]) 
+    
+    # 3. Limit the total sampled to keep computation time reasonable (~30-40 min)
+    sampled = sampled[:sample_patients]
+        
     all_vars = []   # collect variance values from all sampled epochs
 
     ref_patient_data = None   # store one patient's full data as STFT reference
@@ -1346,7 +1362,7 @@ class CAPDataset:
 
 if __name__ == "__main__":
     # ── configure these paths ─────────────────────────────────────────────
-    DATA_DIR   = "./cap_data"    # folder containing all .edf and .edf.st files
+    DATA_DIR   = "./cap_data_v1"    # folder containing all .edf and .edf.st files
     OUTPUT_DIR = "./dataset"     # where to write everything
 
     # ── build the full dataset ────────────────────────────────────────────
