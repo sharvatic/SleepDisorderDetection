@@ -353,30 +353,35 @@ class SleepDisorderCNN(nn.Module):
             nn.Conv3d(64, 128, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm3d(128),
             nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool3d(1),                 # (128, 1, 1, 1)
+            nn.MaxPool3d(kernel_size=2, stride=2),                  # (128, 3, 4, 4)
         )
 
-        # ── Block 4 ───────────────────────────────────────────────────────
-        # self.block4 = nn.Sequential(
-        #     nn.Conv3d(128, 256, kernel_size=(5, 3, 3), padding=(2, 1, 1), bias=False),
-        #     nn.BatchNorm3d(256),
-        #     nn.ReLU(inplace=True),
-        # )
+        # ── Block 4 (The New High-Capacity Layer) ─────────────────────────
+        self.block4 = nn.Sequential(
+            nn.Conv3d(128, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm3d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout3d(p=0.2),                     # Spatial dropout is great for EEG
+            nn.AdaptiveAvgPool3d(1),                 # FINALLY collapse to 1x1x1 here
+        )
 
         # ── Classifier ────────────────────────────────────────────────────
         self.classifier = nn.Sequential(
-            nn.Flatten(),                            # (128,)
+            nn.Flatten(),                            # (256,)
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.4),
             nn.Linear(128, 64),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),
             nn.Linear(64, n_classes),
-            # no softmax here — CrossEntropyLoss applies it internally
+            # no softmax here — CrossEntropyLoss applies it internally which calculates probablilty distribution across all clas
         )
 
     def forward(self, x):
         x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
+        x = self.block4(x)
         x = self.classifier(x)
         return x
 
@@ -592,7 +597,6 @@ def main():
 
     # ── loss, optimiser, scheduler ────────────────────────────────────────
     criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
-    # criterion = FocalLoss(weight=class_weights_tensor, gamma=2.0)
     optimizer = optim.Adam(model.parameters(),
                             lr=LEARNING_RATE,
                             weight_decay=WEIGHT_DECAY)
