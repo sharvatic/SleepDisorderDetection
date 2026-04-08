@@ -14,6 +14,7 @@ This repository contains a modular, production-ready pipeline for detecting slee
 │   ├── training/             # PyTorch dataset and training loops
 │   └── utils/                # Visualization and plotting utilities
 ├── scripts/                  # Unified entry point scripts
+│   ├── download_data.py      # Download datasets from Google Drive automatically
 │   ├── build_data.py         # Process raw EDFs into spatiotemporal tensors
 │   └── train_model.py        # Train and evaluate the neural network
 ├── notebooks/                # Experimental Jupyter notebooks
@@ -28,7 +29,15 @@ This repository contains a modular, production-ready pipeline for detecting slee
    ```
 
 2. **Prepare Raw Data**:
-   Ensure you have the CAP Sleep Dataset files (`.edf` and `.edf.st`) in a directory (e.g., `raw_data/`).
+   You can automatically download the datasets from our Google Drive using the provided script.
+   ```bash
+   # Download the 5-patient sample subset (Recommended for testing)
+   python scripts/download_data.py --type sample
+
+   # Download the full clinical dataset
+   python scripts/download_data.py --type actual
+   ```
+   This will download and extract the `edf` and `edf.st` files directly into your `raw_data/` folder.
 
 ## Usage
 

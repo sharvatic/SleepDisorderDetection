@@ -1,3 +1,4 @@
+import warnings
 import numpy as np
 import mne
 from scipy.signal import butter, sosfiltfilt, stft as scipy_stft
@@ -7,6 +8,9 @@ from config.constants import (
     STFT_WINDOW_SEC, 
     STFT_HOP_SEC
 )
+
+# Suppress expected MNE warnings regarding EDF header discrepancies and missing filters
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="mne")
 
 def load_edf(edf_path, target_channels=None, resample_hz=100.0):
     """
@@ -45,7 +49,7 @@ def load_edf(edf_path, target_channels=None, resample_hz=100.0):
         raise ValueError(f"None of {target_channels} found in {edf_path}.\n"
                          f"Available channels: {raw.ch_names}")
 
-    raw.pick_channels(picked)
+    raw.pick(picked)
     # Standard EEG bandpass to remove DC drift and high-freq noise before STFT
     raw.filter(0.5, 45.0, fir_design="firwin", verbose=False)
     

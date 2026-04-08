@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.data.builder import build_dataset
+from src.utils.logger import setup_logger
 from config.constants import DATASET_ROOT
 
 def main():
@@ -34,14 +35,16 @@ def main():
 
     # Ensure output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
+    
+    logger = setup_logger("build_data", "training_output")
 
-    print("="*60)
-    print("SLEEP DISORDER DETECTION — DATASET BUILDER")
-    print("="*60)
-    print(f"Source Data : {args.data_dir}")
-    print(f"Output Path : {args.output_dir}")
-    print(f"Norm Samples: {args.sample_norms}")
-    print("="*60)
+    logger.info("="*60)
+    logger.info("SLEEP DISORDER DETECTION — DATASET BUILDER")
+    logger.info("="*60)
+    logger.info(f"Source Data : {args.data_dir}")
+    logger.info(f"Output Path : {args.output_dir}")
+    logger.info(f"Norm Samples: {args.sample_norms}")
+    logger.info("="*60)
 
     try:
         build_dataset(
@@ -49,9 +52,9 @@ def main():
             output_dir=args.output_dir, 
             sample_norms=args.sample_norms
         )
-        print("\n[success] Dataset build completed successfully.")
+        logger.info("[success] Dataset build completed successfully.")
     except Exception as e:
-        print(f"\n[error] Dataset build failed: {e}")
+        logger.error(f"[error] Dataset build failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":

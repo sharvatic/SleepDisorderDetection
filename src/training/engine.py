@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-def train_one_epoch(model, loader, criterion, optimizer, device):
+def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None):
     """
     Standard training loop for one epoch.
 
@@ -11,6 +11,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         criterion (callable): Loss function.
         optimizer (Optimizer): PyTorch optimizer.
         device (torch.device): CPU or CUDA.
+        scaler (GradScaler, optional): For mixed precision scaling.
 
     Returns:
         tuple: (average_loss, accuracy)
@@ -25,10 +26,21 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
         disorder_labels = disorder_labels.to(device)
 
         optimizer.zero_grad()
-        outputs = model(tensors) 
-        loss    = criterion(outputs, disorder_labels)
-        loss.backward()
-        optimizer.step()
+        
+        # Automatic Mixed Precision
+        if scaler is not None and scaler.is_enabled():
+            with torch.cuda.amp.autocast():
+                outputs = model(tensors) 
+                loss    = criterion(outputs, disorder_labels)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            outputs = model(tensors) 
+            loss    = criterion(outputs, disorder_labels)
+            loss.backward()
+            optimizer.step()
 
         total_loss += loss.item() * tensors.size(0)
         predicted   = outputs.argmax(dim=1)
@@ -38,7 +50,7 @@ def train_one_epoch(model, loader, criterion, optimizer, device):
     return total_loss / total, correct / total
 
 
-def evaluate(model, loader, criterion, device):
+def evaluate(model, loader, criterion, device, use_amp=False):
     """
     Validation/Test evaluation loop. 
     Does not update weights.
@@ -48,6 +60,7 @@ def evaluate(model, loader, criterion, device):
         loader (DataLoader): Data loader.
         criterion (callable): Loss function.
         device (torch.device): CPU or CUDA.
+        use_amp (bool): Whether to use half precision during inference.
 
     Returns:
         tuple: (average_loss, accuracy, predictions, true_labels)
@@ -64,8 +77,13 @@ def evaluate(model, loader, criterion, device):
             tensors         = tensors.to(device)
             disorder_labels = disorder_labels.to(device)
 
-            outputs   = model(tensors)
-            loss      = criterion(outputs, disorder_labels)
+            if use_amp and device.type == "cuda":
+                with torch.cuda.amp.autocast():
+                    outputs   = model(tensors)
+                    loss      = criterion(outputs, disorder_labels)
+            else:
+                outputs   = model(tensors)
+                loss      = criterion(outputs, disorder_labels)
 
             total_loss += loss.item() * tensors.size(0)
             predicted   = outputs.argmax(dim=1)

@@ -84,8 +84,10 @@ CAP_NAMES = {
 # PATHS & TRAINING CONFIG
 # ═════════════════════════════════════════════════════════════
 
+PROJECT_ROOT      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 # Built Dataset Structure
-DATASET_ROOT      = "dataset"
+DATASET_ROOT      = os.path.join(PROJECT_ROOT, "dataset")
 TENSOR_DIR        = os.path.join(DATASET_ROOT, "tensors")
 LABEL_DIR         = os.path.join(DATASET_ROOT, "labels")
 METADATA_DIR      = os.path.join(DATASET_ROOT, "metadata")
@@ -93,7 +95,7 @@ MANIFEST_PATH     = os.path.join(METADATA_DIR, "manifest.csv")
 GLOBAL_NORMS_PATH = os.path.join(METADATA_DIR, "global_norms.npy")
 CLASS_WEIGHT_PATH = os.path.join(METADATA_DIR, "class_weights.npy")
 
-TRAIN_OUTPUT_DIR  = "training_output"
+TRAIN_OUTPUT_DIR  = os.path.join(PROJECT_ROOT, "training_output")
 BEST_MODEL_PATH   = os.path.join(TRAIN_OUTPUT_DIR, "best_model.pt")
 
 # Split ratios
@@ -103,11 +105,23 @@ TEST_RATIO  = 0.15
 
 # Training Hyperparameters
 RANDOM_SEED     = 42
-BATCH_SIZE      = 16
+BATCH_SIZE      = 256            # Massively increased for A100 40GB VRAM
 LEARNING_RATE   = 1e-3
 WEIGHT_DECAY    = 1e-4
 MAX_EPOCHS      = 100
 EARLY_STOP_PAT  = 15
 
+# NVMe & DataLoader Optimizations
+NUM_WORKERS     = 8              # Concurrent background dataloader workers
+PIN_MEMORY      = True           # Speeds up host-to-device transfers
+USE_AMP         = True           # Use Automatic Mixed Precision for Tensor Cores
+
 # Hardware
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+
+# ═════════════════════════════════════════════════════════════
+# DATASET DOWNLOAD URLS
+# ═════════════════════════════════════════════════════════════
+
+SAMPLE_DATA_URL = "https://drive.google.com/file/d/1Zs3iS1kzqPL6bBr1sIxtJ7QKesipeDRf/view?usp=sharing"
+DATA_URL = "https://drive.google.com/file/d/1FUGi2Vd4nGsjK9_-Vk0d9Yl6BoIAXJ6t/view?usp=sharing"

@@ -1,9 +1,13 @@
 import re
+import warnings
 from pathlib import Path
 import numpy as np
 import mne
 import wfdb
 from config.constants import DISORDER_MAP, SLICE_SEC
+
+# Suppress expected MNE warnings regarding EDF header discrepancies
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="mne")
 
 def parse_st_annotations(edf_path, default_sfreq=512.0):
     """

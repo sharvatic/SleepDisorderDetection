@@ -69,23 +69,38 @@ def stratified_split(dataset, train_ratio=0.70, val_ratio=0.15, random_seed=42):
     labels = dataset.get_labels()
     indices = np.arange(len(labels))
 
-    # 1. Split off Test set
-    trainval_idx, test_idx = train_test_split(
-        indices,
-        test_size    = TEST_RATIO,
-        stratify     = labels,
-        random_state = random_seed
-    )
+    try:
+        # 1. Try Stratified Split
+        trainval_idx, test_idx = train_test_split(
+            indices,
+            test_size    = TEST_RATIO,
+            stratify     = labels,
+            random_state = random_seed
+        )
 
-    # 2. Split remaining into Train and Val
-    # Scale val_ratio relative to the remaining data
-    val_relative = val_ratio / (train_ratio + val_ratio)
-    train_idx, val_idx = train_test_split(
-        trainval_idx,
-        test_size    = val_relative,
-        stratify     = labels[trainval_idx],
-        random_state = random_seed
-    )
+        val_relative = val_ratio / (train_ratio + val_ratio)
+        train_idx, val_idx = train_test_split(
+            trainval_idx,
+            test_size    = val_relative,
+            stratify     = labels[trainval_idx],
+            random_state = random_seed
+        )
+    except ValueError as e:
+        print(f"  [split] ⚠️ Stratification failed (likely rare classes in small sample set). Falling back to random split.")
+        
+        # 2. Fallback to Random Split
+        trainval_idx, test_idx = train_test_split(
+            indices,
+            test_size    = TEST_RATIO,
+            random_state = random_seed
+        )
+
+        val_relative = val_ratio / (train_ratio + val_ratio)
+        train_idx, val_idx = train_test_split(
+            trainval_idx,
+            test_size    = val_relative,
+            random_state = random_seed
+        )
 
     print(f"\n  [split] Train: {len(train_idx)}, Val: {len(val_idx)}, Test: {len(test_idx)}")
     return list(train_idx), list(val_idx), list(test_idx)
