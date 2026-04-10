@@ -1,0 +1,49 @@
+============================================================
+DATASET SUMMARY
+============================================================
+Total patients    : 72 (with .edf.st annotations)
+Total epochs      : 37230
+Tensor shape      : (30, 32, 32, 3)
+Epoch duration    : 30.0s
+Slice resolution  : 1.0s per slice
+Total time        : 0.71 hours
+
+Epochs per disorder:
+  n           6881 epochs
+  nfle       18969 epochs
+  ins         6915 epochs
+  nar         3440 epochs
+  brux        1025 epochs
+
+Epochs per sleep stage:
+  Wake        6229 epochs
+  S1/N1       1639 epochs
+  S2/N2      13277 epochs
+  S3/N3       3754 epochs
+  S4/N3       5091 epochs
+  REM         7240 epochs
+
+CAP event distribution:
+  Epochs with A1:   7628
+  Epochs with A2:   3584
+  Epochs with A3:   4355
+
+Dataset ready at: dataset
+To train: load manifest.csv, use tensor_path to load each sample
+
+Verifying dataset loader
+Dataset loaded: 31001 epochs
+Total epochs    : 31001
+Disorder distribution:
+  n           6217  (20.1%)
+  nfle       17190  (55.4%)
+  ins         4336  (14.0%)
+  nar         2361  (7.6%)
+  brux         897  (2.9%)
+
+Sample 0:
+  tensor shape    : (30, 32, 32, 3)
+  disorder_label  : 7  (brux)
+  stage_label     : 4  (S4/N3)
+  slice_labels    : [0 0 0 1 3 2 3 1 3 3 3 3 3 3 3 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0]
+  arousal seconds : 12 out of 30

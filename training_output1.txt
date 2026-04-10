@@ -1,0 +1,125 @@
+Device: cuda
+PyTorch: 2.5.1+cu121
+
+============================================================
+STEP 1 — Loading dataset
+============================================================
+Dataset: 31001 epochs  |  5 classes: ['normal', 'nfle', 'insomnia', 'narcolepsy', 'bruxism']
+
+============================================================
+STEP 2 — Stratified split (70/15/15)
+============================================================
+
+Dataset split (stratified by disorder label):
+  Train      : 21700 epochs  (70.0%)
+  Validation : 4650 epochs  (15.0%)
+  Test       : 4651 epochs  (15.0%)
+
+  Class distribution across splits:
+  Class         Total  Train    Val   Test
+  ──────────────────────────────────────────
+  normal         6217   4352    932    933
+  nfle          17190  12033   2578   2579
+  insomnia       4336   3035    651    650
+  narcolepsy     2361   1653    354    354
+  bruxism         897    627    135    135
+
+  Class weights (from training split):
+    normal        count=4352  weight=0.997
+    nfle          count=12033  weight=0.361
+    insomnia      count=3035  weight=1.430
+    narcolepsy    count=1653  weight=2.626
+    bruxism       count= 627  weight=6.922
+
+============================================================
+STEP 3 — Model
+============================================================
+  Architecture  : SleepDisorderCNN
+  Parameters    : 1,206,245
+  Classes       : 5  (['normal', 'nfle', 'insomnia', 'narcolepsy', 'bruxism'])
+  Input shape   : (batch, 3, 30, 32, 32)
+
+============================================================
+STEP 4 — Training
+============================================================
+  Batch size    : 32
+  Max epochs    : 100
+  Early stop    : 20 epochs patience
+  Learning rate : 0.0005
+
+  Epoch   1/100  |  train loss=0.8994  acc=0.577  |  val loss=1.6198  acc=0.391  |  207s elapsed
+  Epoch   5/100  |  train loss=0.4252  acc=0.792  |  val loss=1.2744  acc=0.520  |  324s elapsed
+  Epoch  10/100  |  train loss=0.2726  acc=0.866  |  val loss=1.7507  acc=0.725  |  469s elapsed
+  Epoch  15/100  |  train loss=0.1744  acc=0.914  |  val loss=1.5222  acc=0.680  |  614s elapsed
+  Epoch  20/100  |  train loss=0.1176  acc=0.943  |  val loss=1.6008  acc=0.738  |  759s elapsed
+  Epoch  25/100  |  train loss=0.1100  acc=0.948  |  val loss=0.6979  acc=0.827  |  904s elapsed
+
+  Early stopping at epoch 27 (no val improvement for 20 epochs)
+
+  Training complete in 16.0 minutes
+  Best epoch: 7  val loss=0.5565
+  Saved training_curves.png
+C:\Users\sharv\FYP\SleepDisorderDetection\training.py:681: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  checkpoint = torch.load(best_model_path, map_location=DEVICE)
+
+  Loaded best model from epoch 7
+
+============================================================
+STEP 5 — Validation Evaluation
+============================================================
+
+  Validation accuracy: 0.7398  (74.0%)
+
+  Classification report (validation):
+              precision    recall  f1-score   support
+
+      normal       0.59      0.70      0.64       932
+        nfle       0.92      0.76      0.83      2578
+    insomnia       0.96      0.56      0.70       651
+  narcolepsy       0.50      0.98      0.67       354
+     bruxism       0.36      0.92      0.51       135
+
+    accuracy                           0.74      4650
+   macro avg       0.66      0.78      0.67      4650
+weighted avg       0.81      0.74      0.75      4650
+
+  Saved confusion_matrix_—_validation.png
+
+============================================================
+STEP 6 — Test Evaluation  (final, unbiased performance)
+============================================================
+  NOTE: Run this evaluation only ONCE after all training
+        decisions are finalised. Do not use test results
+        to tune hyperparameters — that would invalidate them.
+
+  Test accuracy: 0.7429  (74.3%)
+
+  Classification report (test):
+              precision    recall  f1-score   support
+
+      normal       0.61      0.69      0.65       933
+        nfle       0.92      0.77      0.84      2579
+    insomnia       0.98      0.54      0.70       650
+  narcolepsy       0.49      0.98      0.65       354
+     bruxism       0.35      0.93      0.51       135
+
+    accuracy                           0.74      4651
+   macro avg       0.67      0.78      0.67      4651
+weighted avg       0.82      0.74      0.76      4651
+
+  Saved confusion_matrix_—_test.png
+
+============================================================
+FINAL SUMMARY
+============================================================
+  Model parameters  : 1,206,245
+  Training epochs   : 27
+  Best val epoch    : 7
+  Validation acc    : 0.7398  (74.0%)
+  Test acc          : 0.7429  (74.3%)
+
+  Outputs saved to  : training_output/
+    best_model.pt              ← trained model weights
+    training_curves.png        ← loss and accuracy curves
+    confusion_matrix_*.png     ← per-class performance
+    results_summary.csv        ← all metrics in one row
