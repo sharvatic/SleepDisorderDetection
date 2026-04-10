@@ -100,10 +100,10 @@ TEST_RATIO  = 0.15   # must sum to 1.0 with above two
 
 # training hyperparameters
 BATCH_SIZE      = 16
-LEARNING_RATE   = 1e-3
-WEIGHT_DECAY    = 1e-4
+LEARNING_RATE   = 7e-4
+WEIGHT_DECAY    = 4e-4
 MAX_EPOCHS      = 100
-EARLY_STOP_PAT  = 15    # stop if val loss doesn't improve for this many epochs
+EARLY_STOP_PAT  = 25    # stop if val loss doesn't improve for this many epochs
 RANDOM_SEED     = 42
 
 # device — uses GPU if available, falls back to CPU automatically
@@ -370,7 +370,7 @@ class SleepDisorderCNN(nn.Module):
             nn.Flatten(),                            # (256,)
             nn.Linear(256, 128),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.4),
+            nn.Dropout(p=0.3),
             nn.Linear(128, 64),
             nn.ReLU(inplace=True),
             nn.Linear(64, n_classes),
@@ -601,7 +601,7 @@ def main():
                             lr=LEARNING_RATE,
                             weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5
+        optimizer, mode="min", factor=0.7, patience=5
     )
 
     # ── training loop ─────────────────────────────────────────────────────
@@ -641,7 +641,7 @@ def main():
         history["val_acc"].append(val_acc)
 
         # print progress every 5 epochs
-        if epoch % 5 == 0 or epoch == 1:
+        if epoch:
             elapsed = time.time() - t_start
             print(f"  Epoch {epoch:3d}/{MAX_EPOCHS}  |  "
                   f"train loss={train_loss:.4f}  acc={train_acc:.3f}  |  "
