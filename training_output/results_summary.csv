@@ -1,0 +1,2 @@
+train_epochs,best_epoch,best_val_loss,val_accuracy,test_accuracy,train_time_min,n_classes,class_names,n_train,n_val,n_test
+69,44,0.1737696529660494,0.9260215053763441,0.9288325091378198,33.70533039967219,5,"['normal', 'nfle', 'insomnia', 'narcolepsy', 'bruxism']",21700,4650,4651
