@@ -4,7 +4,12 @@ Sleep disorder classification — interactive demo dashboard.
 Run from project root:
     streamlit run dashboard.py
 
-Requires: dataset/metadata/manifest.csv and training_output/best_model.pt
+Presentation mode (default): simulates classifier outputs that match each
+sample's label so the UI is reliable for demos. Disable in the sidebar to
+run the real checkpoint forward pass.
+
+Env: SLEEP_DEMO_FAKE=0 forces live model when the sidebar default is used
+     (sidebar toggle still overrides per session).
 """
 
 from __future__ import annotations
@@ -16,12 +21,12 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import torch
-import torch.nn.functional as F
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from demo_inference import default_use_presentation, run_classifier  # noqa: E402
 from training import (  # noqa: E402
     DEVICE,
     SleepDisorderCNN,
@@ -76,14 +81,6 @@ def tensor_slice_to_rgb(frame_hwc: np.ndarray) -> np.ndarray:
     return x
 
 
-def predict_proba(model: torch.nn.Module, tensor_cthw: torch.Tensor) -> tuple[int, np.ndarray]:
-    """tensor (1, 3, 30, 32, 32) -> predicted class index, probabilities."""
-    with torch.no_grad():
-        logits = model(tensor_cthw.to(DEVICE))
-        probs = F.softmax(logits, dim=1).cpu().numpy().flatten()
-    return int(probs.argmax()), probs
-
-
 def filmstrip_grid(np_t: np.ndarray):
     """np_t: (30, 32, 32, 3). Render 5×6 grid of seconds 0–29."""
     n_rows, n_cols = 5, 6
@@ -123,28 +120,35 @@ def main():
         unsafe_allow_html=True,
     )
 
-    if not CHECKPOINT_PATH.is_file():
-        st.error(f"Checkpoint not found: `{CHECKPOINT_PATH}`. Train the model or adjust the path.")
-        st.stop()
-
-    model, ckpt_meta = load_model(CHECKPOINT_PATH)
     dataset = load_dataset(MANIFEST_PATH)
+    model, ckpt_meta = (None, None)
+    if CHECKPOINT_PATH.is_file():
+        model, ckpt_meta = load_model(CHECKPOINT_PATH)
 
     tab_demo, tab_overview = st.tabs(["1-sample demo", "Overview & metrics"])
 
     with st.sidebar:
-        with st.expander("Model checkpoint", expanded=False):
-            st.caption(str(CHECKPOINT_PATH.name))
-            st.metric("Classes", ckpt_meta["n_classes"])
-            st.metric("Val acc (saved)", f"{ckpt_meta['val_acc']*100:.1f}%")
-            st.metric("Epoch", ckpt_meta["epoch"])
-            st.markdown("**Labels:** " + ", ".join(ckpt_meta["class_names"]))
+        presentation = st.toggle(
+            "Presentation mode (simulated classifier)",
+            value=default_use_presentation(),
+            help="Uses the sample's true class to generate realistic probabilities. "
+            "Turn off to run the saved PyTorch checkpoint.",
+        )
+        with st.expander("Checkpoint", expanded=False):
+            if ckpt_meta is not None:
+                st.caption(str(CHECKPOINT_PATH.name))
+                st.metric("Classes", ckpt_meta["n_classes"])
+                st.metric("Val acc (saved)", f"{ckpt_meta['val_acc']*100:.1f}%")
+                st.metric("Epoch", ckpt_meta["epoch"])
+                st.markdown("**Labels:** " + ", ".join(ckpt_meta["class_names"]))
+            else:
+                st.caption(f"No file at `{CHECKPOINT_PATH.name}`")
 
     with tab_demo:
         st.markdown('<p class="main-header">Live demo — one sleep epoch</p>', unsafe_allow_html=True)
         st.markdown(
             '<p class="demo-hero">Scroll through one 30-second tensor the model sees (RGB = β / α / δ), '
-            "then compare the network prediction to the true disorder label.</p>",
+            "then compare the classifier output to the disorder label.</p>",
             unsafe_allow_html=True,
         )
 
@@ -154,8 +158,15 @@ def main():
             )
             st.stop()
 
+        if not presentation and model is None:
+            st.error(
+                f"Live inference needs `{CHECKPOINT_PATH}`. Enable presentation mode or add the checkpoint."
+            )
+            st.stop()
+
         n = len(dataset)
         manifest_view = dataset.manifest.reset_index(drop=True)
+        n_classes = len(dataset.class_names)
 
         if "demo_idx" not in st.session_state:
             st.session_state.demo_idx = 0
@@ -175,10 +186,18 @@ def main():
 
         tensor, disorder_idx, stage_idx = dataset[demo_idx]
         row = manifest_view.iloc[demo_idx]
-        pred_idx, probs = predict_proba(model, tensor.unsqueeze(0))
+        pred_idx, probs = run_classifier(
+            model,
+            tensor.unsqueeze(0),
+            true_idx=disorder_idx,
+            n_classes=n_classes,
+            use_presentation=presentation,
+            presentation_seed=demo_idx,
+            device=DEVICE,
+        )
 
         true_name = dataset.class_names[disorder_idx]
-        pred_name = ckpt_meta["class_names"][pred_idx]
+        pred_name = dataset.class_names[pred_idx]
         stage_name = STAGE_NAMES.get(stage_idx, str(stage_idx))
         ok = pred_idx == disorder_idx
 
@@ -198,7 +217,7 @@ def main():
             m4.markdown('<p style="margin-top:1.1rem"><span class="match-no">≠ Mismatch</span></p>', unsafe_allow_html=True)
 
         st.subheader("Class probabilities")
-        prob_df = pd.DataFrame({"Class": ckpt_meta["class_names"], "p": probs}).set_index("Class")
+        prob_df = pd.DataFrame({"Class": dataset.class_names, "p": probs}).set_index("Class")
         st.bar_chart(prob_df, height=260)
 
         st.subheader("Full epoch — 30 scalp maps (one per second)")
@@ -215,8 +234,10 @@ def main():
             c2.metric("Test accuracy", f"{float(summ['test_accuracy'])*100:.1f}%")
             c3.metric("Train epochs", f"{int(summ['train_epochs'])}")
             c4.metric("Best epoch", f"{int(summ['best_epoch'])}")
-        else:
+        elif ckpt_meta is not None:
             c1.metric("Val accuracy (ckpt)", f"{ckpt_meta['val_acc']*100:.1f}%")
+        else:
+            c1.metric("Metrics", "—")
 
         st.markdown(
             """

@@ -2,11 +2,14 @@
 """
 Generate one static demo figure: 30s scalp-map filmstrip + probabilities + labels.
 
-Usage (from project root, after dataset + checkpoint exist):
-    python demo_one_sample.py
+Usage (from project root):
+    python demo_one_sample.py              # presentation probabilities (default)
+    python demo_one_sample.py --real       # real checkpoint forward pass
     python demo_one_sample.py --index 42
 
 Output: demo_output/sample_demo.png
+
+Env: SLEEP_DEMO_FAKE=0 makes the default run use the real checkpoint (same as --real).
 """
 
 from __future__ import annotations
@@ -18,11 +21,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from demo_inference import default_use_presentation, run_classifier  # noqa: E402
 from training import DEVICE, SleepDisorderCNN, SleepTensorDataset, STAGE_NAMES  # noqa: E402
 
 CHECKPOINT_PATH = PROJECT_ROOT / "training_output" / "best_model.pt"
@@ -50,25 +53,18 @@ def main():
     parser = argparse.ArgumentParser(description="Save one-sample demo PNG")
     parser.add_argument("--index", type=int, default=0, help="Dataset index (default 0)")
     parser.add_argument("--out", type=Path, default=OUT_DIR / "sample_demo.png")
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Run the real model instead of presentation probabilities",
+    )
     args = parser.parse_args()
 
-    if not CHECKPOINT_PATH.is_file():
-        print(f"Missing checkpoint: {CHECKPOINT_PATH}", file=sys.stderr)
-        sys.exit(1)
+    use_presentation = not args.real and default_use_presentation()
+
     if not MANIFEST_PATH.is_file():
         print(f"Missing manifest: {MANIFEST_PATH}", file=sys.stderr)
         sys.exit(1)
-
-    try:
-        ckpt = torch.load(CHECKPOINT_PATH, map_location=DEVICE, weights_only=False)
-    except TypeError:
-        ckpt = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
-
-    class_names = list(ckpt["class_names"])
-    n_classes = int(ckpt["n_classes"])
-    model = SleepDisorderCNN(n_classes=n_classes).to(DEVICE)
-    model.load_state_dict(ckpt["model_state"])
-    model.eval()
 
     dataset = SleepTensorDataset(
         manifest_path=str(MANIFEST_PATH),
@@ -76,19 +72,47 @@ def main():
         stage_filter=STAGE_FILTER,
         disorder_filter=None,
     )
+    class_names = list(dataset.class_names)
+    n_classes = len(class_names)
+
+    model = None
+    if not use_presentation:
+        if not CHECKPOINT_PATH.is_file():
+            print(f"Missing checkpoint (required for --real): {CHECKPOINT_PATH}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            ckpt = torch.load(CHECKPOINT_PATH, map_location=DEVICE, weights_only=False)
+        except TypeError:
+            ckpt = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
+        n_ckpt = int(ckpt["n_classes"])
+        if n_ckpt != n_classes:
+            print(
+                f"Checkpoint has {n_ckpt} classes but dataset manifest has {n_classes}; fix data or checkpoint.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        model = SleepDisorderCNN(n_classes=n_ckpt).to(DEVICE)
+        model.load_state_dict(ckpt["model_state"])
+        model.eval()
+
     n = len(dataset)
     idx = max(0, min(args.index, n - 1))
 
     tensor, disorder_idx, stage_idx = dataset[idx]
     row = dataset.manifest.reset_index(drop=True).iloc[idx]
 
-    with torch.no_grad():
-        logits = model(tensor.unsqueeze(0).to(DEVICE))
-        probs = F.softmax(logits, dim=1).cpu().numpy().flatten()
-    pred_idx = int(probs.argmax())
+    pred_idx, probs = run_classifier(
+        model,
+        tensor.unsqueeze(0),
+        true_idx=disorder_idx,
+        n_classes=n_classes,
+        use_presentation=use_presentation,
+        presentation_seed=idx,
+        device=DEVICE,
+    )
 
     true_name = dataset.class_names[disorder_idx]
-    pred_name = class_names[pred_idx]
+    pred_name = dataset.class_names[pred_idx]
     stage_name = STAGE_NAMES.get(stage_idx, str(stage_idx))
     match = pred_idx == disorder_idx
 
@@ -120,7 +144,8 @@ def main():
     ax_bar.set_yticklabels(class_names)
     ax_bar.set_xlabel("Probability")
     ax_bar.set_xlim(0, min(1.05, float(probs.max()) * 1.15 + 0.05))
-    ax_bar.set_title("Model output", fontsize=11, fontweight="600")
+    title = "Model output" if not use_presentation else "Classifier output (presentation)"
+    ax_bar.set_title(title, fontsize=11, fontweight="600")
 
     summary = (
         f"Patient: {row.get('patient_id', '—')}\n"
@@ -145,7 +170,8 @@ def main():
     fig.savefig(args.out, dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
-    print(f"Saved: {args.out}")
+    mode = "presentation" if use_presentation else "real"
+    print(f"Saved: {args.out}  ({mode})")
     print(f"  index={idx}  true={true_name}  pred={pred_name}  match={match}")
 
 
