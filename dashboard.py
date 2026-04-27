@@ -84,31 +84,42 @@ def predict_proba(model: torch.nn.Module, tensor_cthw: torch.Tensor) -> tuple[in
     return int(probs.argmax()), probs
 
 
+def filmstrip_grid(np_t: np.ndarray):
+    """np_t: (30, 32, 32, 3). Render 5×6 grid of seconds 0–29."""
+    n_rows, n_cols = 5, 6
+    for r in range(n_rows):
+        cols = st.columns(n_cols, gap="small")
+        for c in range(n_cols):
+            sec = r * n_cols + c
+            with cols[c]:
+                if sec < 30:
+                    st.image(
+                        tensor_slice_to_rgb(np_t[sec]),
+                        caption=f"{sec}s",
+                        use_container_width=True,
+                    )
+
+
 def main():
     st.set_page_config(
         page_title="Sleep Disorder Detection — Demo",
         page_icon="🌙",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
 
     st.markdown(
         """
         <style>
-        .main-header { font-size: 1.85rem; font-weight: 650; letter-spacing: -0.02em;
-            margin-bottom: 0.25rem; color: #e8eef7; }
-        .subtle { color: #9aa7b8; font-size: 0.95rem; margin-bottom: 1.25rem; }
-        div[data-testid="stMetric"] { background: linear-gradient(145deg, #1a2332 0%, #141b26 100%);
-            border: 1px solid #2a3544; border-radius: 10px; padding: 0.65rem 0.85rem; }
+        .main-header { font-size: 1.9rem; font-weight: 700; letter-spacing: -0.02em;
+            margin-bottom: 0.2rem; }
+        .demo-hero { font-size: 1.05rem; color: #94a3b8; margin-bottom: 1rem; }
+        .match-yes { color: #4ade80; font-weight: 700; }
+        .match-no { color: #f87171; font-weight: 700; }
+        div[data-testid="stMetric"] { background: #1e293b; border: 1px solid #334155;
+            border-radius: 12px; padding: 0.75rem 1rem; }
         </style>
         """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown('<p class="main-header">Sleep disorder classification — 3D CNN demo</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="subtle">Spatiotemporal EEG tensors (delta / alpha / beta as RGB) → disorder prediction. '
-        "Trained on CAP sleep epochs (non–wake stages).</p>",
         unsafe_allow_html=True,
     )
 
@@ -119,20 +130,84 @@ def main():
     model, ckpt_meta = load_model(CHECKPOINT_PATH)
     dataset = load_dataset(MANIFEST_PATH)
 
-    with st.sidebar:
-        st.header("Model")
-        st.caption(f"Checkpoint: `{CHECKPOINT_PATH.name}`")
-        st.metric("Classes", ckpt_meta["n_classes"])
-        st.metric("Best val accuracy", f"{ckpt_meta['val_acc']*100:.1f}%")
-        st.metric("Saved at epoch", ckpt_meta["epoch"])
-        st.divider()
-        st.markdown("**Output labels**")
-        for i, name in enumerate(ckpt_meta["class_names"]):
-            st.caption(f"{i}: {name}")
+    tab_demo, tab_overview = st.tabs(["1-sample demo", "Overview & metrics"])
 
-    tab_overview, tab_explore = st.tabs(["Overview", "Explore sample"])
+    with st.sidebar:
+        with st.expander("Model checkpoint", expanded=False):
+            st.caption(str(CHECKPOINT_PATH.name))
+            st.metric("Classes", ckpt_meta["n_classes"])
+            st.metric("Val acc (saved)", f"{ckpt_meta['val_acc']*100:.1f}%")
+            st.metric("Epoch", ckpt_meta["epoch"])
+            st.markdown("**Labels:** " + ", ".join(ckpt_meta["class_names"]))
+
+    with tab_demo:
+        st.markdown('<p class="main-header">Live demo — one sleep epoch</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="demo-hero">Scroll through one 30-second tensor the model sees (RGB = β / α / δ), '
+            "then compare the network prediction to the true disorder label.</p>",
+            unsafe_allow_html=True,
+        )
+
+        if dataset is None:
+            st.warning(
+                f"No dataset at `{MANIFEST_PATH}`. Build data with `build_dataset.py`, then refresh."
+            )
+            st.stop()
+
+        n = len(dataset)
+        manifest_view = dataset.manifest.reset_index(drop=True)
+
+        if "demo_idx" not in st.session_state:
+            st.session_state.demo_idx = 0
+
+        c_ctrl, c_meta = st.columns([1, 2])
+        with c_ctrl:
+            if st.button("Random sample", type="primary"):
+                st.session_state.demo_idx = int(np.random.randint(0, n))
+            demo_idx = st.number_input(
+                "Sample index",
+                min_value=0,
+                max_value=n - 1,
+                step=1,
+                key="demo_idx",
+                help=f"0 … {n - 1} (filtered manifest, same as training)",
+            )
+
+        tensor, disorder_idx, stage_idx = dataset[demo_idx]
+        row = manifest_view.iloc[demo_idx]
+        pred_idx, probs = predict_proba(model, tensor.unsqueeze(0))
+
+        true_name = dataset.class_names[disorder_idx]
+        pred_name = ckpt_meta["class_names"][pred_idx]
+        stage_name = STAGE_NAMES.get(stage_idx, str(stage_idx))
+        ok = pred_idx == disorder_idx
+
+        with c_meta:
+            st.markdown(
+                f"**Patient** `{row.get('patient_id', '—')}` · **file epoch** {row.get('epoch_idx', '—')} · "
+                f"**stage** {stage_name}"
+            )
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Ground truth", true_name)
+        m2.metric("Predicted", pred_name)
+        m3.metric("Top probability", f"{100.0 * float(probs[pred_idx]):.1f}%")
+        if ok:
+            m4.markdown('<p style="margin-top:1.1rem"><span class="match-yes">✓ Matches label</span></p>', unsafe_allow_html=True)
+        else:
+            m4.markdown('<p style="margin-top:1.1rem"><span class="match-no">≠ Mismatch</span></p>', unsafe_allow_html=True)
+
+        st.subheader("Class probabilities")
+        prob_df = pd.DataFrame({"Class": ckpt_meta["class_names"], "p": probs}).set_index("Class")
+        st.bar_chart(prob_df, height=260)
+
+        st.subheader("Full epoch — 30 scalp maps (one per second)")
+        np_t = tensor.numpy().transpose(1, 2, 3, 0)
+        filmstrip_grid(np_t)
+        st.caption("Tiles read left→right, top→bottom: 0 s … 29 s. Red ≈ beta, green ≈ alpha, blue ≈ delta.")
 
     with tab_overview:
+        st.markdown("### Project overview")
         c1, c2, c3, c4 = st.columns(4)
         if RESULTS_CSV.is_file():
             summ = pd.read_csv(RESULTS_CSV).iloc[0]
@@ -143,88 +218,18 @@ def main():
         else:
             c1.metric("Val accuracy (ckpt)", f"{ckpt_meta['val_acc']*100:.1f}%")
 
-        st.subheader("Pipeline")
         st.markdown(
             """
-1. **Input** — 30 s of bipolar EEG per epoch, band-passed into delta, alpha, and beta; STFT power per second per channel.  
-2. **Spatial map** — RBF interpolation to a 32×32 scalp grid; three bands encoded as **B, G, R** channels → tensor shape **(30, 32, 32, 3)**.  
-3. **Model** — 3D CNN (`SleepDisorderCNN`): conv blocks over time and space, then classifier over disorder classes.  
-4. **Output** — probability distribution over disorder labels (patient-level diagnosis reflected in training labels).
+**Pipeline:** bipolar EEG → band power (δ, α, β) per second → 32×32 scalp maps → stack 30 s → 3D CNN → disorder class.
             """
         )
-
-        st.subheader("Architecture (summary)")
         st.code(
-            "Input: (batch, 3, 30, 32, 32)  — channels = beta, alpha, delta\n"
-            "Blocks: Conv3D + BN + ReLU + pool → … → AdaptiveAvgPool3d → MLP → logits",
+            "Input: (batch, 3, 30, 32, 32)  — C = β, α, δ\n"
+            "SleepDisorderCNN: Conv3D blocks + AdaptiveAvgPool3d + MLP",
             language="text",
         )
-
         if TRAINING_CURVES.is_file():
-            st.subheader("Training curves")
             st.image(str(TRAINING_CURVES), use_container_width=True)
-
-    with tab_explore:
-        if dataset is None:
-            st.warning(
-                f"Dataset manifest not found at `{MANIFEST_PATH}`. "
-                "Run `build_dataset.py` so `manifest.csv` exists, then refresh this page."
-            )
-            st.stop()
-
-        st.subheader("Run inference on a saved epoch")
-        n = len(dataset)
-        manifest_view = dataset.manifest.reset_index(drop=True)
-
-        col_a, col_b = st.columns([1, 2])
-        with col_a:
-            mode = st.radio("Choose sample", ["Pick index", "Random"], horizontal=True)
-            if mode == "Pick index":
-                idx = st.number_input("Dataset index", min_value=0, max_value=n - 1, value=0, step=1)
-            else:
-                if "rand_idx" not in st.session_state:
-                    st.session_state["rand_idx"] = int(np.random.randint(0, n))
-                if st.button("Draw random sample", type="primary"):
-                    st.session_state["rand_idx"] = int(np.random.randint(0, n))
-                idx = int(st.session_state["rand_idx"])
-
-        tensor, disorder_idx, stage_idx = dataset[idx]
-        row = manifest_view.iloc[idx]
-        tensor_b = tensor.unsqueeze(0)
-        pred_idx, probs = predict_proba(model, tensor_b)
-
-        true_name = dataset.class_names[disorder_idx]
-        pred_name = ckpt_meta["class_names"][pred_idx]
-        stage_name = STAGE_NAMES.get(stage_idx, str(stage_idx))
-
-        with col_b:
-            st.markdown(
-                f"**Patient:** `{row.get('patient_id', '—')}` · **Epoch:** {row.get('epoch_idx', '—')} · "
-                f"**Stage:** {stage_name}"
-            )
-
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Ground truth", true_name)
-        m2.metric("Prediction", pred_name)
-        m3.metric("Match", "Yes" if pred_idx == disorder_idx else "No")
-
-        st.subheader("Class probabilities")
-        prob_df = pd.DataFrame({"Class": ckpt_meta["class_names"], "Probability": probs})
-        st.bar_chart(prob_df.set_index("Class"))
-
-        st.subheader("Spatiotemporal tensor (RGB = delta, alpha, beta)")
-        np_t = tensor.numpy().transpose(1, 2, 3, 0)
-        slots = [0, 5, 10, 15, 20, 29]
-        cols = st.columns(len(slots))
-        for c, t_i in zip(cols, slots):
-            with c:
-                st.caption(f"t = {t_i}s")
-                st.image(tensor_slice_to_rgb(np_t[t_i]), use_container_width=True)
-
-        st.caption(
-            "Each frame is a scalp map for one second: red ≈ beta, green ≈ alpha, blue ≈ delta "
-            "(after global normalization from dataset build)."
-        )
 
 
 if __name__ == "__main__":
