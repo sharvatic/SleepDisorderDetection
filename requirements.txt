@@ -6,3 +6,5 @@ wfdb
 scikit-learn
 matplotlib
 seaborn
+torch
+streamlit
